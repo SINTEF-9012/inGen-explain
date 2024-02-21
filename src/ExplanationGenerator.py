@@ -6,20 +6,23 @@
 import configparser
 
 from langchain.llms import OpenAI
-from langchain.chains import SinglePromptChain
 from langchain_community.llms import Ollama
+from langchain_core.prompts import ChatPromptTemplate
+
+CONFIG_FILE_PATH = "src/config.ini"
 
 class ExplanationGenerator:
     def __init__(self, config_path=CONFIG_FILE_PATH):
         self.config = self.read_config(config_path)
-        self.llm = self.initialize_llm()
+        self.system_prompt = "You are a helpful AI assistant."
+        self.llm = self._initialize_llm()
 
     def read_config(self, config_path):
         config = configparser.ConfigParser()
         config.read(config_path)
         return config
 
-    def initialize_llm(self):
+    def _initialize_llm(self):
         llm_name = self.config.get('General', 'llm', fallback='openai')
         if llm_name == 'openai':
             api_key = self.config.get('OpenAI', 'api_key', fallback=None)
@@ -32,12 +35,16 @@ class ExplanationGenerator:
         else:
             raise ValueError(f"Unsupported LLM: {llm_name}")
 
-    def generate_explanation(self, decision_context):
-        prompt = self.create_prompt_from_context(decision_context)
-        chain = SinglePromptChain(llm=self.llm, prompt=prompt)
-        result = chain.run()
-        return result.output
+    def generate_explanation(self, user_prompt):
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", self.system_prompt),
+            ("user", "{user_prompt}")
+        ])
+        chain = prompt | self.llm
+        result = chain.invoke({"user_prompt": user_prompt})
+        return result
 
-    def create_prompt_from_context(self, context):
-        prompt = f"Explain the decision made in the following context: {context}"
-        return prompt
+if __name__ == '__main__':
+
+    eg = ExplanationGenerator()
+    eg.generate_explanation("Why is the sky blue?")
