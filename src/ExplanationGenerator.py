@@ -9,35 +9,35 @@ from langchain.llms import OpenAI
 from langchain.chains import SinglePromptChain
 from langchain_community.llms import Ollama
 
-CONFIG_FILE_PATH = "config.ini"
-
 class ExplanationGenerator:
-    def __init__(self, llm='openai', api_key=None):
-        self.llm = self.initialize_llm(llm, api_key)
+    def __init__(self, config_path=CONFIG_FILE_PATH):
+        self.config = self.read_config(config_path)
+        self.llm = self.initialize_llm()
 
-    def initialize_llm(self, llm_name, api_key):
+    def read_config(self, config_path):
+        config = configparser.ConfigParser()
+        config.read(config_path)
+        return config
+
+    def initialize_llm(self):
+        llm_name = self.config.get('General', 'llm', fallback='openai')
         if llm_name == 'openai':
+            api_key = self.config.get('OpenAI', 'api_key', fallback=None)
+            if not api_key:
+                raise ValueError("API key for OpenAI is required in config.ini")
             return OpenAI(api_key=api_key)
         elif llm_name == 'ollama':
-            return Ollama(model="mistral")
+            model = self.config.get('Ollama', 'model', fallback='mistral')
+            return Ollama(model=model)
         else:
             raise ValueError(f"Unsupported LLM: {llm_name}")
 
     def generate_explanation(self, decision_context):
-        # Construct the prompt based on the decision context
         prompt = self.create_prompt_from_context(decision_context)
-
-        # Use LangChain's SinglePromptChain for straightforward prompt-response interaction
         chain = SinglePromptChain(llm=self.llm, prompt=prompt)
-
-        # Execute the chain to generate the explanation
         result = chain.run()
         return result.output
 
     def create_prompt_from_context(self, context):
-        # This is a placeholder method. You should implement logic to
-        # construct a meaningful prompt based on the AI decision context.
-        # For example:
         prompt = f"Explain the decision made in the following context: {context}"
         return prompt
-
