@@ -85,7 +85,6 @@ class ExplanationGenerator:
 
         self.config = self._read_config(config_path)
         self.log_file_path = log_file_path
-        self.system_prompt = "Please explain the system adaptations made based on the log entries."
         self.llm = self._initialize_llm()
 
 
@@ -121,16 +120,32 @@ class ExplanationGenerator:
         else:
             raise ValueError(f"Unsupported LLM: {llm_name}")
 
-    def generate_explanation(self):
+    def generate_explanation(self, intent_id):
         """Generates an explanation for system adaptations based on log entries.
+
+        This method uses an LLM to generate an explanation for system adaptations
+        based on log entries. It reads the log entries from the log file and
+        extracts the intent and adaptation information. It then generates a
+        prompt for the LLM to generate an explanation and uses the LLM to
+        generate the explanation.
+
+        Args:
+            intent_id (str): The intent ID for which to generate an explanation.
 
         Returns:
             str: The generated explanation.
 
         """
         log_entries = self._read_log_entries()
-        explanation = self._generate_explanation(log_entries)
-        return explanation
+        intent_entries = self._extract_intent_entries(log_entries)
+        intent_adaptations = self._extract_intent_adaptations(log_entries)
+        intent_text = intent_adaptations[intent_id]['intent']
+        adaptations = intent_adaptations[intent_id]['adaptations']
+
+        prompt = self._generate_explanation_prompt(log_entries)
+        chain = prompt | self.llm
+        result = chain.invoke({})
+        return result
 
     def _read_log_entries(self):
         """Reads the log entries from the log file.
@@ -143,207 +158,110 @@ class ExplanationGenerator:
             log_entries = file.readlines()
         return log_entries
 
-    def _generate_explanation(self, log_entries):
-        """Generates an explanation for system adaptations based on log entries.
-
-        Args:
-            log_entries (list): The log entries.
-
-        Returns:
-            str: The generated explanation.
-
-        """
-        intent_entries = self._extract_intent_entries(log_entries)
-        explanation = ""
-        for entry in intent_entries:
-            intent_id = self._extract_intent_id(entry)
-            adaptation = self._extract_adaptation(entry)
-            explanation += f"System adaptation for Intent ID {intent_id}: {adaptation}\n"
-
-        return explanation
-
-    def _extract_intent_id(self, entry):
-        """Extracts the intent ID from a log entry.
-
-        Args:
-            entry (str): The log entry.
-
-        Returns:
-            str: The intent ID.
-
-        """
-        match = re.search(r"Intent ID: (\d+)", entry)
-        if match:
-            return match.group(1)
-        return ""
-
-
-    def _extract_intent_entries(self, log_entries):
-        """Extracts the log entries related to system adaptations.
-
-        Args:
-            log_entries (list): The log entries.
-
-        Returns:
-            list: The log entries related to system adaptations.
-
-        """
-        intent_entries = []
-        for entry in log_entries:
-            if "Adaptation for Intent ID" in entry:
-                intent_entries.append(entry)
-        return intent_entries
-
-    def _extract_adaptation(self, entry):
-        """Extracts the adaptation from a log entry.
-
-        Args:
-            entry (str): The log entry.
-
-        Returns:
-            str: The adaptation.
-
-        """
-        match = re.search(r"Adaptation for Intent ID: \d+ - (.+)", entry)
-        if match:
-            return match.group(1)
-        return ""
-
-    def generate_explanation_prompt(self):
+    def _generate_explanation_prompt(self, log_entries):
         """Generates a prompt for the language model to generate an explanation.
 
         Returns:
             str: The generated prompt.
 
         """
-        # Construct the conversation prompt with system and user messages
-        messages = [("system", self.system_prompt)]
+        use_case_context = self.config.get('General', 'use_case_context', fallback='')
+        system_prompt = self.config.get('General', 'system_prompt', fallback='')
+        full_system_prompt = f"{use_case_context}\n\n{system_prompt}"
+
+        messages = [("system", full_system_prompt)]
         messages += [("user", entry) for entry in log_entries]
 
         prompt = ChatPromptTemplate.from_messages(messages)
-        prompt = ChatPromptTemplate(self.system_prompt)
+
         return prompt
 
-    def _extract_intent_adaptations(self, log_entries):
-        """Extracts and organizes intent and adaptation information.
+    def _extract_intent_entries(self, log_entries):
+        """Extracts the intent entries from the log entries.
 
         Args:
             log_entries (list): The log entries.
 
         Returns:
-            dict: A dictionary where each key is an intent ID and each value is a
-                  dictionary with 'intent' and 'adaptations' keys.
+            dict: The extracted intent entries.
+
+        """
+        intent_entries = {}
+        for entry in log_entries:
+            match = re.search(r"Intent ID: (\d+) - \"(.+)\"", entry)
+            if match:
+                intent_id = match.group(1)
+                intent_text = match.group(2)
+                intent_entries[intent_id] = intent_text
+        return intent_entries
+
+    def _extract_intent_adaptations(self, log_entries):
+        """Extracts the intent adaptations from the log entries.
+
+        Args:
+            log_entries (list): The log entries.
+
+        Returns:
+            dict: The extracted intent adaptations.
+
         """
         intent_adaptations = {}
         for entry in log_entries:
-            if "Intent received" in entry:
-                intent_id = self._extract_intent_id(entry)
-                intent_text = self._extract_intent_text(entry)
-                intent_adaptations[intent_id] = {'intent': intent_text, 'adaptations': []}
-            elif "Adaptation for Intent ID" in entry:
-                intent_id = self._extract_intent_id(entry)
-                adaptation_text = self._extract_adaptation(entry)
-                if intent_id in intent_adaptations:
-                    intent_adaptations[intent_id]['adaptations'].append(adaptation_text)
+            match = re.search(r"Adaptation for Intent ID: (\d+) - (.+)", entry)
+            if match:
+                intent_id = match.group(1)
+                adaptation = match.group(2)
+                if intent_id not in intent_adaptations:
+                    intent_adaptations[intent_id] = {"intent": None, "adaptations": []}
+                if "Intent ID: " in adaptation:
+                    intent_adaptations[intent_id]["intent"] = adaptation
+                else:
+                    intent_adaptations[intent_id]["adaptations"].append(adaptation)
         return intent_adaptations
 
-    def _extract_intent_text(self, entry):
-        """Extracts the intent text from a log entry.
-
-        Args:
-            entry (str): The log entry.
-
-        Returns:
-            str: The intent text.
-        """
-        match = re.search(r'Intent ID: \d+ - "(.+)"', entry)
-        if match:
-            return match.group(1)
-        return ""
-
-
     def generate_html_explanation(self):
-        """Generates an HTML document summarizing intents and adaptations.
+        """Generates an HTML explanation for system adaptations based on log entries.
 
-        The HTML document has CSS styles to make the document look modern and
-        readable.
+        This method uses an LLM to generate an explanation for system adaptations
+        based on log entries and formats the explanation as an HTML document.
 
         Returns:
-            str: HTML content.
+            str: The generated HTML explanation.
+
         """
-        log_entries = self._read_log_entries()
-        intent_adaptations = self._extract_intent_adaptations(log_entries)
-
-        # html_content = '<html><head><title>System Adaptations Explanation</title></head><body>'
-        # html_content += '<h1>Explanation of System Adaptations</h1>'
-
-        # for intent_id, details in intent_adaptations.items():
-        #     html_content += f'<h2>Intent ID: {intent_id}</h2>'
-        #     html_content += f'<p><strong>Intent:</strong> {details["intent"]}</p>'
-        #     html_content += '<p><strong>Adaptations:</strong></p><ul>'
-        #     for adaptation in details['adaptations']:
-        #         html_content += f'<li>{adaptation}</li>'
-        #     html_content += '</ul>'
-
-        # html_content += '</body></html>'
-
-        html_content = f"""
+        explanation = self.generate_explanation("001")
+        html_explanation = f"""<!DOCTYPE html>
         <html>
         <head>
             <title>System Adaptations Explanation</title>
             <style>
                 body {{
                     font-family: Arial, sans-serif;
-                    background-color: #f4f4f4;
-                    margin: auto;
-                    max-width: 800px;
                 }}
                 h1 {{
-                    color: #333;
-                    text-align: center;
-                }}
-                h2 {{
-                    color: #333;
+                    font-size: 24px;
+                    margin-bottom: 16px;
                 }}
                 p {{
-                    color: #333;
-                }}
-                ul {{
-                    list-style-type: none;
-                    padding: 0;
-                }}
-                li {{
-                    margin-bottom: 10px;
-                    padding: 10px;
-                    background-color: #fff;
-                    border-radius: 5px;
-                    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+                    font-size: 16px;
+                    margin-bottom: 8px;
                 }}
             </style>
         </head>
         <body>
-            <h1>Explanation of System Adaptations</h1>
+            <h1>System Adaptations Explanation</h1>
+            <p>{explanation}</p>
+        </body>
+        </html>
         """
-        
-        for intent_id, details in intent_adaptations.items():
-            html_content += f"""
-            <h2>Intent ID: {intent_id}</h2>
-            <p><strong>Intent:</strong> {details["intent"]}</p>
-            <p><strong>Adaptations:</strong></p>
-            <ul>
-            """
-            for adaptation in details['adaptations']:
-                html_content += f'<li>{adaptation}</li>'
-            html_content += '</ul>'
+        return html_explanation
 
-        html_content += '</body></html>'
 
-        return html_content
 
 if __name__ == '__main__':
     eg = ExplanationGenerator()
 
-    explanation = eg.generate_explanation()
+    explanation = eg.generate_explanation("001")
 
     html_explanation = eg.generate_html_explanation()
 
