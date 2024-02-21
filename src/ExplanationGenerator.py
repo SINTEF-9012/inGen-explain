@@ -9,7 +9,7 @@ from langchain.llms import OpenAI
 from langchain_community.llms import Ollama
 from langchain_core.prompts import ChatPromptTemplate
 
-CONFIG_FILE_PATH = "src/config.ini"
+CONFIG_FILE_PATH = "config/config.ini"
 
 class ExplanationGenerator:
     def __init__(self, config_path=CONFIG_FILE_PATH):
