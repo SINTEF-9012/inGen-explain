@@ -4,67 +4,40 @@
 
 """
 import configparser
-import requests
-import openai
+
+from langchain.llms import OpenAI
+from langchain.chains import SinglePromptChain
+from langchain_community.llms import Ollama
 
 CONFIG_FILE_PATH = "config.ini"
 
-class ExplanationClient:
-    def __init__(self, api_key=None, api_url=None):
-        self.api_key = api_key
-        self.api_url = api_url
-
-    def generate_explanation(self, prompt, max_tokens=100, temperature=0.7):
-        raise NotImplementedError("This method should be implemented by subclasses.")
-
-class OpenAIExplanationClient(ExplanationClient):
-    def generate_explanation(self, prompt, max_tokens=100, temperature=0.7):
-        openai.api_key = self.api_key
-        response = openai.Completion.create(
-            engine="text-davinci-003",
-            prompt=prompt,
-            max_tokens=max_tokens,
-            temperature=temperature
-        )
-        return response.choices[0].text.strip()
-
-class OllamaExplanationClient(ExplanationClient):
-    def generate_explanation(self, prompt, max_tokens=100, temperature=0.7):
-        payload = {
-            "prompt": prompt,
-            "max_tokens": max_tokens,
-            "temperature": temperature
-        }
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers['Authorization'] = f'Bearer {self.api_key}'
-        response = requests.post(self.api_url, json=payload, headers=headers)
-        response_data = response.json()
-        return response_data.get("choices", [{}])[0].get("text", "").strip()
-
 class ExplanationGenerator:
-    def __init__(self, config_file):
-        self.config = configparser.ConfigParser()
-        self.config.read(config_file)
-        self.client = self._initialize_client()
+    def __init__(self, llm='openai', api_key=None):
+        self.llm = self.initialize_llm(llm, api_key)
 
-    def _initialize_client(self):
-        # Dynamically select and initialize the appropriate API client based on config
-        if 'OpenAI' in self.config:
-            return OpenAIExplanationClient(api_key=self.config['OpenAI']['api_key'])
-        elif 'Ollama' in self.config:
-            return OllamaExplanationClient(api_url=self.config['Ollama']['api_url'],
-                                           api_key=self.config['Ollama'].get('api_key'))
+    def initialize_llm(self, llm_name, api_key):
+        if llm_name == 'openai':
+            return OpenAI(api_key=api_key)
+        elif llm_name == 'ollama':
+            return Ollama(model="mistral")
         else:
-            raise ValueError("Unsupported API configuration.")
+            raise ValueError(f"Unsupported LLM: {llm_name}")
 
-    def generate_explanation(self, prompt, max_tokens=100, temperature=0.7):
-        return self.client.generate_explanation(prompt, max_tokens=max_tokens, temperature=temperature)
+    def generate_explanation(self, decision_context):
+        # Construct the prompt based on the decision context
+        prompt = self.create_prompt_from_context(decision_context)
 
-if __name__ == '__main__':
-    # Initialize the generator with config file
-    explanation_generator = ExplanationGenerator(config_file=config_file_path)
+        # Use LangChain's SinglePromptChain for straightforward prompt-response interaction
+        chain = SinglePromptChain(llm=self.llm, prompt=prompt)
 
-    # Generate explanations
-    explanation = explanation_generator.generate_explanation("Explain why AI chose action A over B.", max_tokens=200)
-    print(explanation)
+        # Execute the chain to generate the explanation
+        result = chain.run()
+        return result.output
+
+    def create_prompt_from_context(self, context):
+        # This is a placeholder method. You should implement logic to
+        # construct a meaningful prompt based on the AI decision context.
+        # For example:
+        prompt = f"Explain the decision made in the following context: {context}"
+        return prompt
+
